@@ -1,103 +1,266 @@
-import Image from "next/image";
+'use client'
+
+import { useEffect, useRef } from 'react'
+import * as THREE from 'three'
+import styles from './page.module.css'
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const mountRef = useRef<HTMLDivElement>(null)
+  const sceneRef = useRef<THREE.Scene | null>(null)
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
+  const frameId = useRef<number>(0)
+  const statsRef = useRef({
+    packets: 0,
+    bandwidth: 0,
+    nodes: 20
+  })
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+  useEffect(() => {
+    if (!mountRef.current) return
+
+    let scene: THREE.Scene
+    let camera: THREE.PerspectiveCamera
+    let renderer: THREE.WebGLRenderer
+    const dataNodes: THREE.Mesh[] = []
+    let connections: THREE.Line[] = []
+    let packets: THREE.Mesh[] = []
+    let time = 0
+
+    const init = () => {
+      // Scene
+      scene = new THREE.Scene()
+      scene.fog = new THREE.FogExp2(0x000000, 0.005)
+      sceneRef.current = scene
+
+      // Camera
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
+      camera.position.set(0, 0, 80)
+
+      // Renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true })
+      renderer.setSize(window.innerWidth, window.innerHeight)
+      renderer.setPixelRatio(window.devicePixelRatio)
+      rendererRef.current = renderer
+      mountRef.current!.appendChild(renderer.domElement)
+
+      // Create data nodes
+      const nodeCount = 50
+      const nodeGeometry = new THREE.OctahedronGeometry(2, 0)
+      
+      for (let i = 0; i < nodeCount; i++) {
+        const nodeMaterial = new THREE.MeshBasicMaterial({
+          color: 0x00ff00,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.8
+        })
+        
+        const node = new THREE.Mesh(nodeGeometry, nodeMaterial)
+        node.position.set(
+          (Math.random() - 0.5) * 120,
+          (Math.random() - 0.5) * 60,
+          (Math.random() - 0.5) * 60
+        )
+        node.userData = {
+          velocity: new THREE.Vector3(
+            (Math.random() - 0.5) * 0.1,
+            (Math.random() - 0.5) * 0.1,
+            (Math.random() - 0.5) * 0.1
+          )
+        }
+        
+        dataNodes.push(node)
+        scene.add(node)
+      }
+
+      // Create connections
+      updateConnections()
+
+      // Create initial data packets
+      for (let i = 0; i < 100; i++) {
+        createPacket()
+      }
+    }
+
+    const updateConnections = () => {
+      // Remove old connections
+      connections.forEach(line => scene.remove(line))
+      connections = []
+
+      // Create new connections
+      for (let i = 0; i < dataNodes.length; i++) {
+        for (let j = i + 1; j < dataNodes.length; j++) {
+          const distance = dataNodes[i].position.distanceTo(dataNodes[j].position)
+          if (distance < 25) {
+            const geometry = new THREE.BufferGeometry().setFromPoints([
+              dataNodes[i].position,
+              dataNodes[j].position
+            ])
+            const material = new THREE.LineBasicMaterial({
+              color: 0x00ff00,
+              transparent: true,
+              opacity: 0.2
+            })
+            const line = new THREE.Line(geometry, material)
+            connections.push(line)
+            scene.add(line)
+          }
+        }
+      }
+    }
+
+    const createPacket = () => {
+      const packetGeometry = new THREE.BoxGeometry(0.4, 0.4, 0.4)
+      const packetMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ffff,
+        transparent: true,
+        opacity: 0.8
+      })
+      
+      const packet = new THREE.Mesh(packetGeometry, packetMaterial)
+      const sourceNode = dataNodes[Math.floor(Math.random() * dataNodes.length)]
+      const targetNode = dataNodes[Math.floor(Math.random() * dataNodes.length)]
+      
+      packet.position.copy(sourceNode.position)
+      packet.userData = {
+        source: sourceNode,
+        target: targetNode,
+        progress: 0,
+        speed: 0.015 + Math.random() * 0.025
+      }
+      
+      packets.push(packet)
+      scene.add(packet)
+    }
+
+    const animate = () => {
+      frameId.current = requestAnimationFrame(animate)
+      time += 0.01
+
+      // Animate nodes
+      dataNodes.forEach((node, index) => {
+        node.position.add(node.userData.velocity)
+        node.rotation.x += 0.01
+        node.rotation.y += 0.01
+        
+        // Bounce off boundaries
+        if (Math.abs(node.position.x) > 60) node.userData.velocity.x *= -1
+        if (Math.abs(node.position.y) > 30) node.userData.velocity.y *= -1
+        if (Math.abs(node.position.z) > 30) node.userData.velocity.z *= -1
+        
+        // Pulse effect
+        node.scale.setScalar(1 + Math.sin(time * 5 + index) * 0.2)
+      })
+
+      // Update connections
+      if (Math.floor(time) % 2 === 0) {
+        updateConnections()
+      }
+
+      // Animate packets
+      packets = packets.filter(packet => {
+        packet.userData.progress += packet.userData.speed
+        
+        if (packet.userData.progress >= 1) {
+          scene.remove(packet)
+          return false
+        }
+        
+        packet.position.lerpVectors(
+          packet.userData.source.position,
+          packet.userData.target.position,
+          packet.userData.progress
+        )
+        
+        packet.rotation.x += 0.1
+        packet.rotation.y += 0.1
+        
+        return true
+      })
+
+      // Create new packets
+      if (Math.random() < 0.3) {
+        createPacket()
+      }
+
+      // Update stats
+      statsRef.current.packets = packets.length
+      statsRef.current.bandwidth = Math.sin(time) * 50 + 100
+      statsRef.current.nodes = dataNodes.length
+
+      // Camera movement
+      camera.position.x = Math.sin(time * 0.2) * 50
+      camera.position.y = Math.cos(time * 0.15) * 20
+      camera.position.z = 80
+      camera.lookAt(scene.position)
+
+      renderer.render(scene, camera)
+    }
+
+    const handleResize = () => {
+      camera.aspect = window.innerWidth / window.innerHeight
+      camera.updateProjectionMatrix()
+      renderer.setSize(window.innerWidth, window.innerHeight)
+    }
+
+    init()
+    animate()
+    window.addEventListener('resize', handleResize)
+
+    return () => {
+      const currentMount = mountRef.current
+      window.removeEventListener('resize', handleResize)
+      cancelAnimationFrame(frameId.current)
+      renderer.dispose()
+      if (currentMount && renderer.domElement) {
+        currentMount.removeChild(renderer.domElement)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const dataContainer = document.getElementById('dataContainer')
+    if (!dataContainer) return
+
+    const interval = setInterval(() => {
+      const dataFlow = document.createElement('div')
+      dataFlow.className = styles.dataFlow
+      dataFlow.style.left = Math.random() * window.innerWidth + 'px'
+      dataFlow.style.animationDelay = Math.random() * 5 + 's'
+      dataFlow.textContent = Math.random().toString(2).substr(2, 8)
+      dataContainer.appendChild(dataFlow)
+      
+      setTimeout(() => dataFlow.remove(), 5000)
+    }, 100)
+
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    const updateHUD = setInterval(() => {
+      const packetsElement = document.getElementById('packets')
+      const bandwidthElement = document.getElementById('bandwidth')
+      const nodesElement = document.getElementById('nodes')
+      
+      if (packetsElement) packetsElement.textContent = statsRef.current.packets.toString()
+      if (bandwidthElement) bandwidthElement.textContent = statsRef.current.bandwidth.toFixed(1)
+      if (nodesElement) nodesElement.textContent = statsRef.current.nodes.toString()
+    }, 100)
+
+    return () => clearInterval(updateHUD)
+  }, [])
+
+  return (
+    <>
+      <div className={styles.matrixBg}></div>
+      <div className={styles.hud}>
+        <div className={styles.hudItem}>SYSTEM: ONLINE</div>
+        <div className={styles.hudItem}>PACKETS: <span id="packets">0</span></div>
+        <div className={styles.hudItem}>BANDWIDTH: <span id="bandwidth">0</span> GB/s</div>
+        <div className={styles.hudItem}>NODES: <span id="nodes">0</span></div>
+      </div>
+      <div id="dataContainer"></div>
+      <div ref={mountRef} />
+    </>
+  )
 }
