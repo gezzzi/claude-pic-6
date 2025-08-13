@@ -25,6 +25,9 @@ export default function Home() {
     let connections: THREE.Line[] = []
     let packets: THREE.Mesh[] = []
     let time = 0
+    let lastConnectionUpdate = 0
+    const nodeGeometry = new THREE.OctahedronGeometry(2, 0)
+    const packetGeometry = new THREE.BoxGeometry(0.4, 0.4, 0.4)
 
     const init = () => {
       // Scene
@@ -45,7 +48,6 @@ export default function Home() {
 
       // Create data nodes
       const nodeCount = 50
-      const nodeGeometry = new THREE.OctahedronGeometry(2, 0)
       
       for (let i = 0; i < nodeCount; i++) {
         const nodeMaterial = new THREE.MeshBasicMaterial({
@@ -83,8 +85,14 @@ export default function Home() {
     }
 
     const updateConnections = () => {
-      // Remove old connections
-      connections.forEach(line => scene.remove(line))
+      // Remove old connections and dispose geometry/materials
+      connections.forEach(line => {
+        scene.remove(line)
+        line.geometry.dispose()
+        if (line.material instanceof THREE.Material) {
+          line.material.dispose()
+        }
+      })
       connections = []
 
       // Create new connections
@@ -110,7 +118,8 @@ export default function Home() {
     }
 
     const createPacket = () => {
-      const packetGeometry = new THREE.BoxGeometry(0.4, 0.4, 0.4)
+      if (packets.length > 200) return // Limit maximum packets
+      
       const packetMaterial = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         transparent: true,
@@ -152,9 +161,10 @@ export default function Home() {
         node.scale.setScalar(1 + Math.sin(time * 5 + index) * 0.2)
       })
 
-      // Update connections
-      if (Math.floor(time) % 2 === 0) {
+      // Update connections every 2 seconds instead of every frame
+      if (time - lastConnectionUpdate > 2) {
         updateConnections()
+        lastConnectionUpdate = time
       }
 
       // Animate packets
@@ -163,6 +173,10 @@ export default function Home() {
         
         if (packet.userData.progress >= 1) {
           scene.remove(packet)
+          // Dispose packet geometry and material
+          if (packet.material instanceof THREE.Material) {
+            packet.material.dispose()
+          }
           return false
         }
         
@@ -211,7 +225,34 @@ export default function Home() {
       const currentMount = mountRef.current
       window.removeEventListener('resize', handleResize)
       cancelAnimationFrame(frameId.current)
+      
+      // Dispose all Three.js resources
+      dataNodes.forEach(node => {
+        scene.remove(node)
+        if (node.material instanceof THREE.Material) {
+          node.material.dispose()
+        }
+      })
+      
+      connections.forEach(line => {
+        scene.remove(line)
+        line.geometry.dispose()
+        if (line.material instanceof THREE.Material) {
+          line.material.dispose()
+        }
+      })
+      
+      packets.forEach(packet => {
+        scene.remove(packet)
+        if (packet.material instanceof THREE.Material) {
+          packet.material.dispose()
+        }
+      })
+      
+      nodeGeometry.dispose()
+      packetGeometry.dispose()
       renderer.dispose()
+      
       if (currentMount && renderer.domElement) {
         currentMount.removeChild(renderer.domElement)
       }
@@ -222,18 +263,39 @@ export default function Home() {
     const dataContainer = document.getElementById('dataContainer')
     if (!dataContainer) return
 
+    const maxElements = 50 // Limit maximum DOM elements
+    const activeElements = new Set<HTMLDivElement>()
+
     const interval = setInterval(() => {
+      // Remove oldest elements if limit exceeded
+      if (activeElements.size >= maxElements) {
+        const oldestElement = activeElements.values().next().value
+        if (oldestElement) {
+          oldestElement.remove()
+          activeElements.delete(oldestElement)
+        }
+      }
+
       const dataFlow = document.createElement('div')
       dataFlow.className = styles.dataFlow
       dataFlow.style.left = Math.random() * window.innerWidth + 'px'
       dataFlow.style.animationDelay = Math.random() * 5 + 's'
       dataFlow.textContent = Math.random().toString(2).substr(2, 8)
       dataContainer.appendChild(dataFlow)
+      activeElements.add(dataFlow)
       
-      setTimeout(() => dataFlow.remove(), 5000)
-    }, 100)
+      setTimeout(() => {
+        dataFlow.remove()
+        activeElements.delete(dataFlow)
+      }, 5000)
+    }, 200) // Reduced frequency from 100ms to 200ms
 
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      // Clean up all remaining elements
+      activeElements.forEach(element => element.remove())
+      activeElements.clear()
+    }
   }, [])
 
   useEffect(() => {
